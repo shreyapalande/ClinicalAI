@@ -1,5 +1,6 @@
 import os
 import shutil
+from typing import Optional
 from fastapi import APIRouter, Depends, File, UploadFile, Form, HTTPException
 from sqlalchemy.orm import Session
 from db.database import get_db
@@ -13,59 +14,49 @@ UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
-@router.post("/")
-async def create_record(
-    audio: UploadFile = File(...),
-    db: Session = Depends(get_db),
-):
-    # save uploaded file
-    ext = os.path.splitext(audio.filename)[1] or ".webm"
-    save_path = os.path.join(UPLOAD_DIR, f"recording_{audio.filename}")
-    with open(save_path, "wb") as f:
-        shutil.copyfileobj(audio.file, f)
+def _resolve_patient(patient_id: Optional[int], extracted_patient: dict, db: Session) -> Patient:
+    """Return an existing patient by ID, or find/create one from extracted data."""
+    if patient_id:
+        patient = db.query(Patient).filter(Patient.id == patient_id).first()
+        if not patient:
+            raise HTTPException(status_code=404, detail=f"Patient {patient_id} not found")
+        return patient
 
-    # transcribe
-    try:
-        transcript = transcribe_audio(save_path)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Transcription error: {e}")
-
-    # extract structured data
-    try:
-        extracted = extract_record(transcript)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Extraction error: {e}")
-
-    patient_data = extracted.get("patient", {})
-    visit_data = extracted.get("visit", {})
-
-    # find or create patient by name
+    # fallback: match by name or create new
     patient = None
-    if patient_data.get("name"):
+    if extracted_patient.get("name"):
         patient = db.query(Patient).filter(
-            Patient.name.ilike(patient_data["name"])
+            Patient.name.ilike(extracted_patient["name"])
         ).first()
 
     if not patient:
         patient = Patient(
-            name=patient_data.get("name") or "Unknown",
-            age=patient_data.get("age"),
-            gender=patient_data.get("gender"),
-            contact=patient_data.get("contact"),
-            blood_type=patient_data.get("blood_type"),
-            allergies=patient_data.get("allergies", []),
+            name=extracted_patient.get("name") or "Unknown",
+            age=extracted_patient.get("age"),
+            gender=extracted_patient.get("gender"),
+            contact=extracted_patient.get("contact"),
+            blood_type=extracted_patient.get("blood_type"),
+            allergies=extracted_patient.get("allergies", []),
         )
         db.add(patient)
         db.flush()
 
-    # build embedding
+    return patient
+
+
+def _save_visit(patient: Patient, visit_data: dict, transcript: str,
+                audio_filename: Optional[str], db: Session) -> Visit:
     visit_text = build_visit_text(visit_data)
-    embedding = embed_text(visit_text) if visit_text else None
+    try:
+        embedding = embed_text(visit_text) if visit_text else None
+    except Exception as e:
+        print(f"[embed] WARNING: {e}", flush=True)
+        embedding = None
 
     visit = Visit(
         patient_id=patient.id,
         transcript=transcript,
-        audio_filename=audio.filename,
+        audio_filename=audio_filename,
         chief_complaint=visit_data.get("chief_complaint"),
         symptoms=visit_data.get("symptoms", []),
         diagnoses=visit_data.get("diagnoses", []),
@@ -77,8 +68,32 @@ async def create_record(
     )
     db.add(visit)
     db.commit()
-    db.refresh(patient)
     db.refresh(visit)
+    return visit
+
+
+@router.post("/")
+async def create_record(
+    audio: UploadFile = File(...),
+    patient_id: Optional[int] = Form(None),
+    db: Session = Depends(get_db),
+):
+    save_path = os.path.join(UPLOAD_DIR, f"recording_{audio.filename}")
+    with open(save_path, "wb") as f:
+        shutil.copyfileobj(audio.file, f)
+
+    try:
+        transcript = transcribe_audio(save_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Transcription error: {e}")
+
+    try:
+        extracted = extract_record(transcript)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Extraction error: {e}")
+
+    patient = _resolve_patient(patient_id, extracted.get("patient", {}), db)
+    visit = _save_visit(patient, extracted.get("visit", {}), transcript, audio.filename, db)
 
     return {
         "patient_id": patient.id,
@@ -92,6 +107,7 @@ async def create_record(
 @router.post("/transcript")
 async def record_from_transcript(
     transcript: str = Form(...),
+    patient_id: Optional[int] = Form(None),
     db: Session = Depends(get_db),
 ):
     try:
@@ -99,48 +115,8 @@ async def record_from_transcript(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Extraction error: {e}")
 
-    patient_data = extracted.get("patient", {})
-    visit_data = extracted.get("visit", {})
-
-    patient = None
-    if patient_data.get("name"):
-        patient = db.query(Patient).filter(
-            Patient.name.ilike(patient_data["name"])
-        ).first()
-
-    if not patient:
-        patient = Patient(
-            name=patient_data.get("name") or "Unknown",
-            age=patient_data.get("age"),
-            gender=patient_data.get("gender"),
-            contact=patient_data.get("contact"),
-            blood_type=patient_data.get("blood_type"),
-            allergies=patient_data.get("allergies", []),
-        )
-        db.add(patient)
-        db.flush()
-
-    visit_text = build_visit_text(visit_data)
-    try:
-        embedding = embed_text(visit_text) if visit_text else None
-    except Exception as e:
-        print(f"[embed] WARNING: {e}", flush=True)
-        embedding = None
-
-    visit = Visit(
-        patient_id=patient.id,
-        transcript=transcript,
-        chief_complaint=visit_data.get("chief_complaint"),
-        symptoms=visit_data.get("symptoms", []),
-        diagnoses=visit_data.get("diagnoses", []),
-        prescriptions=visit_data.get("prescriptions", []),
-        vitals=visit_data.get("vitals", {}),
-        notes=visit_data.get("notes"),
-        follow_up=visit_data.get("follow_up"),
-        embedding=embedding,
-    )
-    db.add(visit)
-    db.commit()
+    patient = _resolve_patient(patient_id, extracted.get("patient", {}), db)
+    visit = _save_visit(patient, extracted.get("visit", {}), transcript, None, db)
 
     return {
         "patient_id": patient.id,

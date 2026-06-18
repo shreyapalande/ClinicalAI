@@ -50,8 +50,11 @@ def patient_to_dict(p: Patient, include_visits: bool = False) -> dict:
 
 
 @router.get("/")
-def list_patients(db: Session = Depends(get_db)):
-    patients = db.query(Patient).order_by(Patient.updated_at.desc()).all()
+def list_patients(q: Optional[str] = None, db: Session = Depends(get_db)):
+    query = db.query(Patient)
+    if q:
+        query = query.filter(Patient.name.ilike(f"%{q}%"))
+    patients = query.order_by(Patient.updated_at.desc()).all()
     return [patient_to_dict(p) for p in patients]
 
 
