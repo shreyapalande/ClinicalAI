@@ -1,8 +1,10 @@
 """
 Pure tool functions for the clinical search agent.
 No FastMCP dependency — safe to import anywhere.
+Uses backend.database (new SQLAlchemy setup) and backend.models.
 """
 
+import json
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -10,65 +12,103 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from datetime import datetime
 from typing import Optional
 
-from db.database import SessionLocal
-from db.models import Patient, Visit
+from sqlalchemy.orm import Session
+
+from backend.database import SessionLocal
+from backend.models import Embedding, Patient, Prescription, Record
 from services.gemini import embed_text
 from services.search import cosine_similarity
 
 
-def _db():
+def _open_db() -> Session:
     return SessionLocal()
 
 
-def get_all_patient_ids() -> list[int]:
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _rx_list(record: Record) -> list[dict]:
+    return [
+        {"drug": rx.drug, "dose": rx.dose, "frequency": rx.frequency, "duration": rx.duration}
+        for rx in record.prescriptions
+    ]
+
+
+# ── Tools ─────────────────────────────────────────────────────────────────────
+
+def get_all_patient_ids(db: Optional[Session] = None) -> list[int]:
     """Returns the IDs of every patient in the database."""
-    db = _db()
+    own = db is None
+    db = db or _open_db()
     try:
         return [p.id for p in db.query(Patient.id).all()]
     finally:
-        db.close()
+        if own:
+            db.close()
 
 
-def search_records_semantic(query: str, top_k: int = 10) -> list[dict]:
-    """Searches all visit records by semantic similarity. Returns up to top_k results."""
-    db = _db()
+def search_records_semantic(
+    query: str,
+    top_k: int = 10,
+    db: Optional[Session] = None,
+) -> list[dict]:
+    """
+    Searches all records with embeddings by semantic similarity.
+    Uses an ORM inner join of Record ↔ Embedding, then cosine similarity in Python.
+    """
+    own = db is None
+    db = db or _open_db()
     try:
-        visits = db.query(Visit).filter(Visit.embedding.isnot(None)).all()
-        if not visits:
+        rows = (
+            db.query(Record, Embedding)
+            .join(Embedding, Embedding.record_id == Record.id)
+            .all()
+        )
+        if not rows:
             return []
+
         query_vec = embed_text(query)
-        scored = [(v, cosine_similarity(query_vec, v.embedding)) for v in visits if v.embedding]
-        scored.sort(key=lambda x: x[1], reverse=True)
+
+        scored: list[tuple[Record, Embedding, float]] = []
+        for record, emb in rows:
+            vec = json.loads(emb.vector)
+            score = cosine_similarity(query_vec, vec)
+            scored.append((record, emb, score))
+
+        scored.sort(key=lambda x: x[2], reverse=True)
+
         results = []
-        for visit, score in scored[:top_k]:
-            patient = db.query(Patient).filter(Patient.id == visit.patient_id).first()
+        for record, _emb, score in scored[:top_k]:
+            patient = db.query(Patient).filter(Patient.id == record.patient_id).first()
             results.append({
-                "patient_id": visit.patient_id,
+                "patient_id": record.patient_id,
                 "patient_name": patient.name if patient else "Unknown",
-                "visit_id": visit.id,
+                "record_id": record.id,
                 "score": round(score, 4),
-                "chief_complaint": visit.chief_complaint,
-                "symptoms": visit.symptoms or [],
-                "diagnoses": visit.diagnoses or [],
-                "prescriptions": visit.prescriptions or [],
-                "created_at": visit.created_at.isoformat() if visit.created_at else None,
+                "chief_complaint": record.chief_complaint,
+                "symptoms": record.symptoms or [],
+                "diagnoses": record.diagnoses or [],
+                "prescriptions": _rx_list(record),
+                "created_at": record.created_at.isoformat() if record.created_at else None,
             })
         return results
     finally:
-        db.close()
+        if own:
+            db.close()
 
 
-def get_patient_details(patient_id: int) -> dict:
+def get_patient_details(patient_id: int, db: Optional[Session] = None) -> dict:
     """Returns the full medical record for a single patient."""
-    db = _db()
+    own = db is None
+    db = db or _open_db()
     try:
         patient = db.query(Patient).filter(Patient.id == patient_id).first()
         if not patient:
             return {"error": f"Patient {patient_id} not found"}
-        visits = (
-            db.query(Visit)
-            .filter(Visit.patient_id == patient_id)
-            .order_by(Visit.created_at.desc())
+
+        records = (
+            db.query(Record)
+            .filter(Record.patient_id == patient_id)
+            .order_by(Record.created_at.desc())
             .all()
         )
         return {
@@ -79,42 +119,45 @@ def get_patient_details(patient_id: int) -> dict:
             "contact": patient.contact,
             "blood_type": patient.blood_type,
             "allergies": patient.allergies or [],
-            "visits": [
+            "records": [
                 {
-                    "id": v.id,
-                    "chief_complaint": v.chief_complaint,
-                    "symptoms": v.symptoms or [],
-                    "diagnoses": v.diagnoses or [],
-                    "prescriptions": v.prescriptions or [],
-                    "vitals": v.vitals or {},
-                    "notes": v.notes,
-                    "follow_up": v.follow_up,
-                    "created_at": v.created_at.isoformat() if v.created_at else None,
-                    "transcript": v.transcript,
+                    "id": r.id,
+                    "chief_complaint": r.chief_complaint,
+                    "symptoms": r.symptoms or [],
+                    "diagnoses": r.diagnoses or [],
+                    "prescriptions": _rx_list(r),
+                    "vitals": r.vitals or {},
+                    "notes": r.notes,
+                    "follow_up": r.follow_up,
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                    "transcript": r.transcript,
                 }
-                for v in visits
+                for r in records
             ],
         }
     finally:
-        db.close()
+        if own:
+            db.close()
 
 
 def filter_by_last_visit(
     patient_ids: list[int],
     before_date: Optional[str] = None,
     after_date: Optional[str] = None,
+    db: Optional[Session] = None,
 ) -> list[int]:
-    """Filters patients by date of most recent visit."""
-    db = _db()
+    """Filters patients by date of most recent record."""
+    own = db is None
+    db = db or _open_db()
     try:
         before = datetime.fromisoformat(before_date) if before_date else None
         after = datetime.fromisoformat(after_date) if after_date else None
         matched = []
         for pid in patient_ids:
             last = (
-                db.query(Visit)
-                .filter(Visit.patient_id == pid)
-                .order_by(Visit.created_at.desc())
+                db.query(Record)
+                .filter(Record.patient_id == pid)
+                .order_by(Record.created_at.desc())
                 .first()
             )
             if not last:
@@ -127,40 +170,45 @@ def filter_by_last_visit(
             matched.append(pid)
         return matched
     finally:
-        db.close()
+        if own:
+            db.close()
 
 
-def filter_by_prescription(patient_ids: list[int], medication: str) -> list[int]:
-    """Filters patients who have been prescribed a medication (partial, case-insensitive)."""
-    db = _db()
+def filter_by_prescription(
+    patient_ids: list[int],
+    medication: str,
+    db: Optional[Session] = None,
+) -> list[int]:
+    """Filters patients prescribed a medication (partial, case-insensitive drug name match)."""
+    own = db is None
+    db = db or _open_db()
     try:
         med = medication.lower()
         matched = []
         for pid in patient_ids:
-            visits = db.query(Visit).filter(Visit.patient_id == pid).all()
-            found = False
-            for visit in visits:
-                for rx in (visit.prescriptions or []):
-                    drug = rx.get("drug", "") if isinstance(rx, dict) else str(rx)
-                    if med in drug.lower():
-                        found = True
-                        break
-                if found:
-                    break
-            if found:
+            hit = (
+                db.query(Prescription)
+                .join(Record, Record.id == Prescription.record_id)
+                .filter(Record.patient_id == pid)
+                .all()
+            )
+            if any(med in rx.drug.lower() for rx in hit):
                 matched.append(pid)
         return matched
     finally:
-        db.close()
+        if own:
+            db.close()
 
 
 def filter_by_age_range(
     patient_ids: list[int],
     min_age: Optional[int] = None,
     max_age: Optional[int] = None,
+    db: Optional[Session] = None,
 ) -> list[int]:
     """Filters patients by age range."""
-    db = _db()
+    own = db is None
+    db = db or _open_db()
     try:
         matched = []
         for pid in patient_ids:
@@ -174,12 +222,18 @@ def filter_by_age_range(
             matched.append(pid)
         return matched
     finally:
-        db.close()
+        if own:
+            db.close()
 
 
-def filter_by_allergy(patient_ids: list[int], allergen: str) -> list[int]:
+def filter_by_allergy(
+    patient_ids: list[int],
+    allergen: str,
+    db: Optional[Session] = None,
+) -> list[int]:
     """Filters patients with a recorded allergy (partial, case-insensitive)."""
-    db = _db()
+    own = db is None
+    db = db or _open_db()
     try:
         allergen_lower = allergen.lower()
         matched = []
@@ -187,10 +241,9 @@ def filter_by_allergy(patient_ids: list[int], allergen: str) -> list[int]:
             p = db.query(Patient).filter(Patient.id == pid).first()
             if not p:
                 continue
-            for a in (p.allergies or []):
-                if allergen_lower in a.lower():
-                    matched.append(pid)
-                    break
+            if any(allergen_lower in a.lower() for a in (p.allergies or [])):
+                matched.append(pid)
         return matched
     finally:
-        db.close()
+        if own:
+            db.close()
