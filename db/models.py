@@ -17,7 +17,7 @@ class Patient(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    visits = relationship("Visit", back_populates="patient", order_by="Visit.created_at.desc()")
+    visits = relationship("Visit", back_populates="patient", order_by="Visit.created_at.desc()", cascade="all, delete-orphan")
 
 
 class Visit(Base):

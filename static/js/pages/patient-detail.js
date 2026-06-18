@@ -33,6 +33,7 @@ function _renderDetail(p) {
       </div>
       <div style="margin-left:auto;display:flex;gap:0.5rem">
         <button class="btn btn-ghost btn-sm" onclick="editPatient(${p.id})">Edit Patient</button>
+        <button class="btn btn-danger btn-sm" onclick="confirmDeletePatient(${p.id}, '${(p.name || '').replace(/'/g, "\\'")}')">Delete Patient</button>
         <button class="btn btn-primary btn-sm" onclick="Router.go('record')">+ New Visit</button>
       </div>
     </div>
@@ -166,6 +167,33 @@ async function savePatient(id) {
     toast('Patient updated', 'success');
     const p = await API.get(`/api/patients/${id}`);
     _renderDetail(p);
+  } catch (e) {
+    toast(`Error: ${e.message}`, 'error');
+  }
+}
+
+// ── PATIENT DELETE ──────────────────────────────────────────────────────────
+
+function confirmDeletePatient(id, name) {
+  openModal(`
+    <div class="modal-header">
+      <h2>Delete Patient</h2>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <p>Are you sure you want to delete <strong>${name}</strong>? This will permanently remove all their visits and cannot be undone.</p>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-danger" onclick="deletePatient(${id})">Delete</button>
+    </div>
+  `);
+}
+
+async function deletePatient(id) {
+  try {
+    await API.delete(`/api/patients/${id}`);
+    closeModal();
+    toast('Patient deleted', 'success');
+    Router.go('patients');
   } catch (e) {
     toast(`Error: ${e.message}`, 'error');
   }
