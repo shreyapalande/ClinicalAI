@@ -4,7 +4,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from db.database import init_db
-from routes import patients, record, search
+from routes import patients, record, search, agent
 
 load_dotenv()
 
@@ -23,6 +23,7 @@ init_db()
 app.include_router(patients.router)
 app.include_router(record.router)
 app.include_router(search.router)
+app.include_router(agent.router)
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
