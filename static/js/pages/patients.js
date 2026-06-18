@@ -22,7 +22,8 @@ async function renderPatients() {
           <div>
             <strong>${p.name || 'Unknown'}</strong>
             <div class="patient-meta">
-              ${p.age ? `${p.age} yrs` : ''}
+              <span style="color:var(--accent);font-size:0.78rem;font-weight:600">ID: ${p.id}</span>
+              ${p.age ? ` · ${p.age} yrs` : ''}
               ${p.gender ? ` · ${p.gender}` : ''}
               ${p.blood_type ? ` · ${p.blood_type}` : ''}
             </div>

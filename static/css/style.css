@@ -187,3 +187,32 @@ h3 { font-size: 0.95rem; color: var(--text-muted); text-transform: uppercase; le
 p { line-height: 1.6; }
 small { color: var(--text-muted); font-size: 0.8rem; }
 hr { border: none; border-top: 1px solid var(--border); margin: 1.2rem 0; }
+
+/* MODAL */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 500; padding: 1rem;
+}
+.modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  width: 100%; max-width: 560px;
+  max-height: 90vh; overflow-y: auto;
+  padding: 1.6rem;
+  animation: slideIn 0.2s ease;
+}
+.modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 1.2rem;
+}
+.modal-header h2 { margin: 0; }
+.modal-close {
+  background: none; border: none; color: var(--text-muted);
+  font-size: 1.3rem; cursor: pointer; line-height: 1;
+}
+.modal-close:hover { color: var(--text); }
+.modal-footer {
+  display: flex; gap: 0.7rem; justify-content: flex-end; margin-top: 1.4rem;
+}
