@@ -1,110 +1,40 @@
 // ── SEARCH PAGE ──────────────────────────────────────────────────────────────
 
-let _searchMode = 'semantic'; // 'semantic' | 'agent'
+// Persist last query + rendered results so the back button can restore them
+const _searchState = { query: '', resultsHTML: '' };
 
-function renderSearch() {
+function renderSearch(restoreState = false) {
   const app = document.getElementById('app');
   app.innerHTML = `
-    <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1.5rem;flex-wrap:wrap">
-      <h1 style="margin:0">Search</h1>
-      <div class="mode-tabs">
-        <button id="tab-semantic" class="mode-tab ${_searchMode === 'semantic' ? 'active' : ''}"
-                onclick="switchMode('semantic')">Semantic</button>
-        <button id="tab-agent" class="mode-tab ${_searchMode === 'agent' ? 'active' : ''}"
-                onclick="switchMode('agent')">AI Agent</button>
-      </div>
+    <div style="margin-bottom:1.5rem">
+      <h1 style="margin:0 0 0.4rem">Search</h1>
+      <p style="color:var(--text-muted);font-size:0.88rem;margin:0">
+        Ask anything in plain English — the agent combines filters, semantic search, and patient records to answer.
+      </p>
     </div>
 
-    <div id="semantic-panel" style="display:${_searchMode === 'semantic' ? 'block' : 'none'}">
-      <div class="search-bar">
-        <div class="search-input-wrap">
-          <span class="search-icon">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-            </svg>
-          </span>
-          <input type="text" id="search-input"
-                 placeholder='e.g. "patients with diabetes" or "recurring headache"' />
-        </div>
-        <button class="btn btn-primary" onclick="doSearch()">Search</button>
+    <div class="search-bar">
+      <div class="search-input-wrap">
+        <span class="search-icon">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+        </span>
+        <input type="text" id="agent-input"
+               placeholder='e.g. "patients with diabetes and hypertension" or "who needs renal monitoring?"' />
       </div>
-      <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:1.5rem">
-        Searches by meaning — not just keywords. Try symptoms, conditions, drugs, or plain descriptions.
-      </p>
-      <div id="search-results"></div>
+      <button class="btn btn-primary" onclick="doAgentQuery()">Ask</button>
     </div>
 
-    <div id="agent-panel" style="display:${_searchMode === 'agent' ? 'block' : 'none'}">
-      <div class="search-bar">
-        <div class="search-input-wrap">
-          <span class="search-icon">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>
-            </svg>
-          </span>
-          <input type="text" id="agent-input"
-                 placeholder='e.g. "adult patients with hypertension prescribed beta-blockers"' />
-        </div>
-        <button class="btn btn-primary" onclick="doAgentQuery()">Ask Agent</button>
-      </div>
-      <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:1.5rem">
-        Ask complex questions in plain English. The agent combines filters, semantic search, and patient records to answer.
-      </p>
-      <div id="agent-results"></div>
-    </div>
+    <div id="agent-results"></div>
   `;
 
-  document.getElementById('search-input').addEventListener('keydown', e => {
-    if (e.key === 'Enter') doSearch();
-  });
-  document.getElementById('agent-input').addEventListener('keydown', e => {
-    if (e.key === 'Enter') doAgentQuery();
-  });
-}
+  const input = document.getElementById('agent-input');
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') doAgentQuery(); });
 
-function switchMode(mode) {
-  _searchMode = mode;
-  document.getElementById('tab-semantic').classList.toggle('active', mode === 'semantic');
-  document.getElementById('tab-agent').classList.toggle('active', mode === 'agent');
-  document.getElementById('semantic-panel').style.display = mode === 'semantic' ? 'block' : 'none';
-  document.getElementById('agent-panel').style.display = mode === 'agent' ? 'block' : 'none';
-}
-
-// ── SEMANTIC SEARCH ──────────────────────────────────────────────────────────
-
-async function doSearch() {
-  const q = document.getElementById('search-input').value.trim();
-  if (!q) return;
-
-  const results = document.getElementById('search-results');
-  results.innerHTML = '<div class="spinner"></div>';
-
-  try {
-    const data = await API.get(`/api/search/?q=${encodeURIComponent(q)}`);
-    if (!data.results.length) {
-      results.innerHTML = `<div class="empty-state"><div class="icon">🔍</div><p>No matching records found.</p></div>`;
-      return;
-    }
-    results.innerHTML = data.results.map(r => `
-      <div class="card" onclick="Router.go('patient', ${r.patient_id})" style="cursor:pointer">
-        <div style="display:flex;align-items:flex-start;justify-content:space-between">
-          <div>
-            <strong>${r.patient_name}</strong>
-            <div style="color:var(--text-muted);font-size:0.82rem;margin-top:0.2rem">${formatDate(r.created_at)}</div>
-          </div>
-          <span class="result-score">${(r.score * 100).toFixed(1)}% match</span>
-        </div>
-        <hr />
-        <p style="font-size:0.9rem">${r.chief_complaint || '—'}</p>
-        <div style="margin-top:0.6rem">
-          ${renderTags(r.symptoms, 'tag-symptom')}
-          ${renderTags(r.diagnoses, 'tag-diagnosis')}
-          ${r.prescriptions ? r.prescriptions.map(p => `<span class="tag tag-drug">${p.drug || p}</span>`).join('') : ''}
-        </div>
-      </div>
-    `).join('');
-  } catch (e) {
-    results.innerHTML = `<p style="color:var(--danger)">${e.message}</p>`;
+  if (restoreState && _searchState.query) {
+    input.value = _searchState.query;
+    document.getElementById('agent-results').innerHTML = _searchState.resultsHTML;
   }
 }
 
@@ -124,6 +54,8 @@ async function doAgentQuery() {
   try {
     const data = await API.post('/api/agent/query', { query: q });
     _renderAgentResults(data);
+    _searchState.query = q;
+    _searchState.resultsHTML = document.getElementById('agent-results').innerHTML;
   } catch (e) {
     resultsEl.innerHTML = `<p style="color:var(--danger)">${e.message}</p>`;
   }

@@ -50,6 +50,19 @@ The agent chains these tools autonomously — a query like _"adults over 50 pres
 
 Because these tools are exposed via **FastMCP**, the same server can connect to any MCP-compatible client — no code changes required.
 
+### Example Queries (tested against a 9-patient dataset)
+
+| Query | What the agent does |
+| ----- | ------------------- |
+| _"Which patients have both diabetes and hypertension?"_ | Semantic search for each condition, intersects results |
+| _"Which patients should NOT be prescribed NSAIDs, and why?"_ | Combines allergy filter + semantic search for disease contraindications (CKD, GERD) — returns clinical reasoning per patient |
+| _"Which patients are taking 4 or more medications?"_ | Iterates all patients via `get_patient_details`, counts prescriptions, returns full drug lists |
+| _"List all patients with cardiovascular risk factors"_ | Clusters smokers, hypertensives, diabetics, and cardiac diagnoses in one pass |
+| _"Which patients over 50 have more than one chronic condition?"_ | Age filter → per-patient detail retrieval → multi-condition reasoning |
+| _"Which patients cannot receive Penicillin or Sulfonamide antibiotics?"_ | `filter_by_allergy` for each allergen, merges and deduplicates results |
+| _"Which patients need regular renal or metabolic monitoring, and for what?"_ | Semantic search + clinical inference — flags Methotrexate, ACE inhibitors, CKD, diabetes |
+| _"Which patients have a mental health diagnosis or are on psychiatric medication?"_ | Semantic search across visit notes and prescription data |
+
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                          ClinAI Backend                         │

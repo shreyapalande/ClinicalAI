@@ -9,6 +9,9 @@ Usage (patients already in DB from verify_e2e.py):
 
 Usage (skip transcript submission, only run queries):
     .\\venv\\Scripts\\python backend/test_complex.py --queries-only
+
+Usage (run specific query numbers only, 1-indexed):
+    .\\venv\\Scripts\\python backend/test_complex.py --queries-only --only=4,7,9
 """
 
 import os
@@ -26,6 +29,12 @@ import requests
 
 SERVER = "http://localhost:8000"
 QUERIES_ONLY = "--queries-only" in sys.argv
+
+_only_arg = next((a for a in sys.argv if a.startswith("--only=")), None)
+ONLY_QUERIES = (
+    {int(n) for n in _only_arg.split("=")[1].split(",")}
+    if _only_arg else None
+)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -437,6 +446,8 @@ def main():
     sep("COMPLEX MCP AGENT QUERIES (9 patients total)")
 
     for i, (label, query) in enumerate(COMPLEX_QUERIES, 1):
+        if ONLY_QUERIES and i not in ONLY_QUERIES:
+            continue
         print(f"\n  [{i}/{len(COMPLEX_QUERIES)}] {label}")
         print(f"  Query: \"{query}\"")
         result = agent_query(query)

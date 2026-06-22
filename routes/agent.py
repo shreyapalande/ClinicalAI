@@ -148,7 +148,8 @@ Strategy:
 - For condition/symptom/diagnosis queries ("diabetic patients", "chest pain", "back pain"), ALWAYS start with search_records_semantic() — it understands medical synonyms and searches visit notes.
 - For structured attribute queries (allergy, drug, age, date), use get_all_patient_ids() then the appropriate filter_by_* tools.
 - Combine both: semantic search to find candidates, then filter_by_* to narrow further.
-- Always finish with get_patient_details() for each patient you will specifically discuss.
+- ALWAYS call get_patient_details() for EVERY patient you will name before writing your answer. NEVER write a patient's name without first calling get_patient_details() — do not use placeholder names like "John Doe" or "Patient X".
+- For complex multi-criteria queries (e.g. "patients over 50 with multiple conditions", "patients on 4+ medications"): use get_all_patient_ids(), call get_patient_details() on each one, then reason over the returned data to find matches. Do not give up — iterate through all patients manually if needed.
 - Do NOT guess drug names for condition queries — use search_records_semantic("diabetes") not filter_by_prescription("insulin").
 
 Answer clearly and concisely. Name patients and cite medical facts.

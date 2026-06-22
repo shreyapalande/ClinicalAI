@@ -1,7 +1,7 @@
 async function renderPatientDetail(id) {
   const app = document.getElementById('app');
   app.innerHTML = `
-    <a href="#" onclick="Router.go('patients');return false" style="color:var(--text-muted);font-size:0.85rem">← Back to patients</a>
+    <a href="#" onclick="Router.back();return false" style="color:var(--text-muted);font-size:0.85rem">← Back</a>
     <div id="detail-content" style="margin-top:1.2rem"><div class="spinner"></div></div>
   `;
 
