@@ -17,8 +17,15 @@ function renderSearch() {
 
     <div id="semantic-panel" style="display:${_searchMode === 'semantic' ? 'block' : 'none'}">
       <div class="search-bar">
-        <input type="text" id="search-input"
-               placeholder='e.g. "patients with diabetes" or "recurring headache"' />
+        <div class="search-input-wrap">
+          <span class="search-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+          </span>
+          <input type="text" id="search-input"
+                 placeholder='e.g. "patients with diabetes" or "recurring headache"' />
+        </div>
         <button class="btn btn-primary" onclick="doSearch()">Search</button>
       </div>
       <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:1.5rem">
@@ -29,8 +36,15 @@ function renderSearch() {
 
     <div id="agent-panel" style="display:${_searchMode === 'agent' ? 'block' : 'none'}">
       <div class="search-bar">
-        <input type="text" id="agent-input"
-               placeholder='e.g. "adult patients with hypertension prescribed beta-blockers"' />
+        <div class="search-input-wrap">
+          <span class="search-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>
+            </svg>
+          </span>
+          <input type="text" id="agent-input"
+                 placeholder='e.g. "adult patients with hypertension prescribed beta-blockers"' />
+        </div>
         <button class="btn btn-primary" onclick="doAgentQuery()">Ask Agent</button>
       </div>
       <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:1.5rem">

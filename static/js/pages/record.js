@@ -12,8 +12,15 @@ function renderRecord() {
     <!-- Step 1: Patient Selection -->
     <div class="card" id="patient-select-card">
       <h2 style="margin-bottom:1rem">Step 1 — Select Patient</h2>
-      <div style="display:flex;gap:0.7rem;margin-bottom:1rem">
-        <input type="text" id="patient-search" placeholder="Search by name or ID…" style="flex:1" oninput="searchPatients()" />
+      <div class="search-bar" style="margin-bottom:1rem">
+        <div class="search-input-wrap">
+          <span class="search-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+          </span>
+          <input type="text" id="patient-search" placeholder="Search by name or ID…" oninput="searchPatients()" />
+        </div>
         <button class="btn btn-ghost" onclick="selectNewPatient()">+ New Patient</button>
       </div>
       <div id="patient-search-results"></div>

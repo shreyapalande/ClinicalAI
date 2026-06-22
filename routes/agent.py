@@ -145,10 +145,11 @@ You are a clinical AI assistant that answers questions about patient records.
 You have tools to query a medical database.
 
 Strategy:
-- For broad queries, call get_all_patient_ids() then apply filter_by_* tools to narrow down.
-- For clinical/symptom queries, use search_records_semantic() first.
-- Always finish with get_patient_details() for patients you will specifically discuss.
-- Chain filters for complex queries: age → prescription → allergy, etc.
+- For condition/symptom/diagnosis queries ("diabetic patients", "chest pain", "back pain"), ALWAYS start with search_records_semantic() — it understands medical synonyms and searches visit notes.
+- For structured attribute queries (allergy, drug, age, date), use get_all_patient_ids() then the appropriate filter_by_* tools.
+- Combine both: semantic search to find candidates, then filter_by_* to narrow further.
+- Always finish with get_patient_details() for each patient you will specifically discuss.
+- Do NOT guess drug names for condition queries — use search_records_semantic("diabetes") not filter_by_prescription("insulin").
 
 Answer clearly and concisely. Name patients and cite medical facts.
 If no patients match, say so directly.
@@ -206,9 +207,13 @@ def agent_query(body: dict = Body(...)):
             except Exception as exc:
                 result = {"error": str(exc)}
 
-            # Collect patient IDs from tool results
+            # Collect patient IDs from tool results.
+            # Semantic search: only include hits above 0.45 cosine similarity so
+            # low-relevance records don't flood the matched-patients panel.
             if fn_name == "search_records_semantic" and isinstance(result, list):
-                found_patient_ids.update(r["patient_id"] for r in result)
+                found_patient_ids.update(
+                    r["patient_id"] for r in result if r.get("score", 0) >= 0.45
+                )
             elif fn_name == "get_patient_details" and isinstance(result, dict) and "id" in result:
                 found_patient_ids.add(result["id"])
             elif fn_name.startswith("filter_by_") and isinstance(result, list):

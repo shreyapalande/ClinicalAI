@@ -40,6 +40,7 @@ class _KeyPool:
 
     def call(self, fn, *args, **kwargs):
         """Call fn(client, *args, **kwargs), rotating through keys on rate-limit errors."""
+        import time
         start = self._idx
         while True:
             try:
@@ -50,6 +51,8 @@ class _KeyPool:
                     self._rotate()
                     if self._idx == start:
                         raise RuntimeError("All Gemini API keys exhausted.") from e
+                    # Brief pause so per-minute limits on the next key have time to clear
+                    time.sleep(2)
                 else:
                     raise
 

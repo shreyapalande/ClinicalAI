@@ -132,9 +132,62 @@ body {
 .timer { font-size: 2rem; font-weight: 700; color: var(--accent-light); font-variant-numeric: tabular-nums; }
 
 /* SEARCH */
-.search-bar { display: flex; gap: 0.7rem; margin-bottom: 1.5rem; }
-.search-bar input { flex: 1; }
-.result-score { font-size: 0.75rem; color: var(--text-muted); float: right; }
+.search-bar {
+  display: flex;
+  gap: 0.6rem;
+  margin-bottom: 1.5rem;
+  align-items: center;
+}
+.search-input-wrap {
+  flex: 1;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.search-input-wrap .search-icon {
+  position: absolute;
+  left: 1rem;
+  color: var(--text-muted);
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+}
+.search-bar input {
+  width: 100%;
+  background: var(--surface2);
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  padding: 0.75rem 1rem 0.75rem 2.75rem;
+  font-size: 0.95rem;
+  font-family: var(--font);
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.search-bar input::placeholder { color: var(--text-muted); }
+.search-bar input:-webkit-autofill,
+.search-bar input:-webkit-autofill:hover,
+.search-bar input:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--text);
+  -webkit-box-shadow: 0 0 0 1000px #252836 inset;
+  box-shadow: 0 0 0 1000px #252836 inset;
+  border-color: var(--accent);
+  transition: background-color 5000s ease-in-out 0s;
+}
+.search-bar input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(108, 99, 255, 0.15);
+}
+.result-score {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--accent-light);
+  background: rgba(108, 99, 255, 0.12);
+  border: 1px solid rgba(108, 99, 255, 0.25);
+  border-radius: 20px;
+  padding: 0.15rem 0.55rem;
+  white-space: nowrap;
+}
 
 /* PATIENT HEADER */
 .patient-header { display: flex; align-items: center; gap: 1.2rem; margin-bottom: 2rem; }

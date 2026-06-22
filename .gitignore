@@ -7,5 +7,4 @@ __pycache__/
 .env
 uploads/
 .DS_Store
-test_gemini.py
-check_embeddings.py
+test_runs

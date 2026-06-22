@@ -2,11 +2,14 @@
 End-to-end verification: SQLAlchemy + Postgres migration.
 Runs all 6 verification steps and prints real output at each stage.
 
-Usage (Postgres):
-    .\\venv\\Scripts\\python backend/verify_e2e.py
+Usage:
+    .\\venv\\Scripts\\python backend/verify_e2e.py               # full run, Postgres
+    .\\venv\\Scripts\\python backend/verify_e2e.py --sqlite       # full run, SQLite
+    .\\venv\\Scripts\\python backend/verify_e2e.py --from-step=4  # resume at step 4 (skips DB setup + transcript submission)
+    .\\venv\\Scripts\\python backend/verify_e2e.py --from-step=5  # resume at step 5 (skips agent queries too)
 
-Usage (SQLite — pass --sqlite flag):
-    .\\venv\\Scripts\\python backend/verify_e2e.py --sqlite
+--from-step reads existing patients from the DB instead of resubmitting transcripts,
+so no Gemini extract/embed tokens are spent on steps already completed.
 """
 
 import json
@@ -17,6 +20,9 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 MODE = "sqlite" if "--sqlite" in sys.argv else "postgres"
+
+_from_step_arg = next((a for a in sys.argv if a.startswith("--from-step")), None)
+FROM_STEP = int(_from_step_arg.split("=")[1]) if _from_step_arg and "=" in _from_step_arg else 1
 
 if MODE == "postgres":
     os.environ["DATABASE_URL"] = "postgresql+pg8000://postgres:postgres@localhost:5432/clinai"
@@ -48,7 +54,6 @@ def _retry_post(url, *, data=None, json_body=None, timeout=90, label="request") 
             r = requests.post(url, json=json_body, timeout=timeout)
         if r.status_code == 200:
             return r.json()
-        # Extract retry-delay from error body if present
         wait = 30
         try:
             detail = r.json().get("detail", "")
@@ -166,6 +171,10 @@ def main():
     from backend.database import Base, init_db, SessionLocal
     from backend.models import Patient, Record, Prescription, Embedding
 
+    if FROM_STEP > 1:
+        print(f"\n  Resuming from step {FROM_STEP} — skipping steps 1–{FROM_STEP - 1}.")
+        print(f"  No transcripts will be resubmitted; existing DB rows will be reused.\n")
+
     # ─────────────────────────────────────────────────────────────────────────
     sep(f"STEP 1 — DATABASE_URL + init_db()  [{MODE.upper()}]")
     # ─────────────────────────────────────────────────────────────────────────
@@ -173,134 +182,154 @@ def main():
     url = os.environ["DATABASE_URL"]
     print(f"  DATABASE_URL = {url}\n")
 
-    # Drop everything and recreate so we start completely fresh
-    print("  Dropping all tables (fresh start)…")
-    engine = create_engine(
-        url,
-        connect_args={"check_same_thread": False} if url.startswith("sqlite") else {},
-        echo=True,          # prints every SQL statement
-    )
-    # Use raw DROP CASCADE to handle any stale tables from old schema
-    with engine.connect() as conn:
-        if url.startswith("sqlite"):
-            # SQLite: drop known tables in dependency order
-            for tbl in ["embeddings", "prescriptions", "records", "visits", "patients"]:
-                conn.execute(text(f"DROP TABLE IF EXISTS {tbl}"))
-        else:
-            # Postgres: cascade handles all FK dependencies at once
-            conn.execute(text(
-                "DROP TABLE IF EXISTS embeddings, prescriptions, records, visits, patients CASCADE"
-            ))
-        conn.commit()
-    print("\n  Running init_db() (CREATE TABLE statements above)…")
-    Base.metadata.create_all(bind=engine)
-
-    print("\n  Tables now in DB:")
-    for t in sorted(inspect(engine).get_table_names()):
-        print(f"    ✓ {t}")
-
-    engine.dispose()  # close echo engine; real code uses non-echo engine
+    if FROM_STEP > 1:
+        print("  SKIPPED (tables already exist from previous run).")
+        init_db()
+    else:
+        print("  Dropping all tables (fresh start)…")
+        engine = create_engine(
+            url,
+            connect_args={"check_same_thread": False} if url.startswith("sqlite") else {},
+            echo=True,
+        )
+        with engine.connect() as conn:
+            if url.startswith("sqlite"):
+                for tbl in ["embeddings", "prescriptions", "records", "visits", "patients"]:
+                    conn.execute(text(f"DROP TABLE IF EXISTS {tbl}"))
+            else:
+                conn.execute(text(
+                    "DROP TABLE IF EXISTS embeddings, prescriptions, records, visits, patients CASCADE"
+                ))
+            conn.commit()
+        print("\n  Running init_db() (CREATE TABLE statements above)…")
+        Base.metadata.create_all(bind=engine)
+        print("\n  Tables now in DB:")
+        for t in sorted(inspect(engine).get_table_names()):
+            print(f"    ✓ {t}")
+        engine.dispose()
 
     # ─────────────────────────────────────────────────────────────────────────
     sep("STEP 2 — Submit 6 transcripts, verify row count after each")
     # ─────────────────────────────────────────────────────────────────────────
 
     created = []
-    db = SessionLocal()
-    try:
-        for label, tx in TRANSCRIPTS:
-            resp = post_transcript(tx)
-            count = db.query(Patient).count()
-            db.expire_all()  # force re-read from DB
-            count = db.query(Patient).count()
-            created.append(resp)
-            print(
-                f"  [{count}/6]  {resp['patient_name']:<22}"
-                f"  patient_id={resp['patient_id']}  record_id={resp['record_id']}"
-                f"  ({label})"
-            )
-            time.sleep(5)   # pause between Gemini calls to avoid per-minute limit
-    finally:
-        db.close()
 
-    print(f"\n  Final patient count in DB: ", end="")
-    db2 = SessionLocal()
-    final_count = db2.query(Patient).count()
-    db2.close()
-    print(final_count)
-    assert final_count == 6, f"Expected 6 patients, got {final_count}"
-    print("  ✓ Exactly 6 patients — no duplicates, no missing inserts.")
+    if FROM_STEP > 2:
+        print("  SKIPPED — reading existing patients from DB instead.")
+        db_skip = SessionLocal()
+        try:
+            patients_in_db = db_skip.query(Patient).order_by(Patient.id).all()
+            records_in_db = db_skip.query(Record).order_by(Record.id).all()
+            for pat in patients_in_db:
+                rec = next((r for r in records_in_db if r.patient_id == pat.id), None)
+                created.append({
+                    "patient_name": pat.name,
+                    "patient_id": pat.id,
+                    "record_id": rec.id if rec else None,
+                })
+                print(f"    loaded: {pat.name} (patient_id={pat.id})")
+        finally:
+            db_skip.close()
+    else:
+        db = SessionLocal()
+        try:
+            for label, tx in TRANSCRIPTS:
+                resp = post_transcript(tx)
+                db.expire_all()
+                count = db.query(Patient).count()
+                created.append(resp)
+                print(
+                    f"  [{count}/6]  {resp['patient_name']:<22}"
+                    f"  patient_id={resp['patient_id']}  record_id={resp['record_id']}"
+                    f"  ({label})"
+                )
+                time.sleep(5)
+        finally:
+            db.close()
+
+        print(f"\n  Final patient count in DB: ", end="")
+        db2 = SessionLocal()
+        final_count = db2.query(Patient).count()
+        db2.close()
+        print(final_count)
+        assert final_count == 6, f"Expected 6 patients, got {final_count}"
+        print("  ✓ Exactly 6 patients — no duplicates, no missing inserts.")
 
     # ─────────────────────────────────────────────────────────────────────────
     sep("STEP 3 — Full DB record for James Wilson (field-by-field)")
     # ─────────────────────────────────────────────────────────────────────────
 
-    james_info = next((r for r in created if "james" in r["patient_name"].lower()), None)
-    assert james_info, "James not found in created records"
+    if FROM_STEP > 3:
+        print("  SKIPPED.")
+    else:
+        james_info = next((r for r in created if "james" in r["patient_name"].lower()), None)
+        assert james_info, "James not found in created records"
 
-    db3 = SessionLocal()
-    try:
-        james = db3.query(Patient).filter(Patient.id == james_info["patient_id"]).first()
-        record = db3.query(Record).filter(Record.patient_id == james.id).first()
-        prescriptions = db3.query(Prescription).filter(Prescription.record_id == record.id).all()
-        embedding = db3.query(Embedding).filter(Embedding.record_id == record.id).first()
+        db3 = SessionLocal()
+        try:
+            james = db3.query(Patient).filter(Patient.id == james_info["patient_id"]).first()
+            record = db3.query(Record).filter(Record.patient_id == james.id).first()
+            prescriptions = db3.query(Prescription).filter(Prescription.record_id == record.id).all()
+            embedding = db3.query(Embedding).filter(Embedding.record_id == record.id).first()
 
-        print(f"  PATIENT ROW  (id={james.id})")
-        print(f"    name        = {james.name!r}")
-        print(f"    age         = {james.age}")
-        print(f"    gender      = {james.gender!r}")
-        print(f"    blood_type  = {james.blood_type!r}")
-        print(f"    allergies   = {james.allergies}")
-        print(f"    created_at  = {james.created_at}")
+            print(f"  PATIENT ROW  (id={james.id})")
+            print(f"    name        = {james.name!r}")
+            print(f"    age         = {james.age}")
+            print(f"    gender      = {james.gender!r}")
+            print(f"    blood_type  = {james.blood_type!r}")
+            print(f"    allergies   = {james.allergies}")
+            print(f"    created_at  = {james.created_at}")
 
-        print(f"\n  RECORD ROW   (id={record.id})")
-        print(f"    chief_complaint = {record.chief_complaint!r}")
-        print(f"    symptoms        = {record.symptoms}")
-        print(f"    diagnoses       = {record.diagnoses}")
-        print(f"    vitals          = {record.vitals}")
-        print(f"    notes           = {record.notes!r}")
-        print(f"    follow_up       = {record.follow_up!r}")
+            print(f"\n  RECORD ROW   (id={record.id})")
+            print(f"    chief_complaint = {record.chief_complaint!r}")
+            print(f"    symptoms        = {record.symptoms}")
+            print(f"    diagnoses       = {record.diagnoses}")
+            print(f"    vitals          = {record.vitals}")
+            print(f"    notes           = {record.notes!r}")
+            print(f"    follow_up       = {record.follow_up!r}")
 
-        print(f"\n  PRESCRIPTIONS ({len(prescriptions)} row(s))")
-        for rx in prescriptions:
-            print(f"    drug={rx.drug!r}  dose={rx.dose!r}  freq={rx.frequency!r}  dur={rx.duration!r}")
+            print(f"\n  PRESCRIPTIONS ({len(prescriptions)} row(s))")
+            for rx in prescriptions:
+                print(f"    drug={rx.drug!r}  dose={rx.dose!r}  freq={rx.frequency!r}  dur={rx.duration!r}")
 
-        print(f"\n  EMBEDDING")
-        vec = json.loads(embedding.vector) if embedding else None
-        print(f"    model     = {embedding.embed_model if embedding else 'MISSING'}")
-        print(f"    dimension = {len(vec) if vec else 'N/A'}")
-        print(f"    first 5 values = {vec[:5] if vec else 'N/A'}")
+            print(f"\n  EMBEDDING")
+            vec = json.loads(embedding.vector) if embedding else None
+            print(f"    model     = {embedding.embed_model if embedding else 'MISSING'}")
+            print(f"    dimension = {len(vec) if vec else 'N/A'}")
+            print(f"    first 5 values = {vec[:5] if vec else 'N/A'}")
 
-        print(f"\n  TRANSCRIPT CROSS-CHECK (what the doctor actually said):")
-        print(f"    Transcript says 58yo male smoker, O neg blood, ST depression,")
-        print(f"    Aspirin 325mg + Nitroglycerin 0.4mg, urgent cardiology referral.")
-        print(f"    Extracted: age={james.age}, gender={james.gender!r}, blood_type={james.blood_type!r}")
-        print(f"    Drugs extracted: {[rx.drug for rx in prescriptions]}")
-        print(f"    Chief complaint: {record.chief_complaint!r}")
-        # Assertions
-        assert james.age == 58,          f"age mismatch: {james.age}"
-        assert "male" in (james.gender or "").lower(), f"gender mismatch: {james.gender}"
-        assert "o" in (james.blood_type or "").lower(), f"blood_type mismatch: {james.blood_type}"
-        drugs = [rx.drug.lower() for rx in prescriptions]
-        assert any("aspirin" in d for d in drugs), f"Aspirin missing from {drugs}"
-        assert any("nitroglycerin" in d or "nitro" in d for d in drugs), f"Nitroglycerin missing from {drugs}"
-        print(f"    ✓ All field assertions passed.")
-    finally:
-        db3.close()
+            print(f"\n  TRANSCRIPT CROSS-CHECK (what the doctor actually said):")
+            print(f"    Transcript says 58yo male smoker, O neg blood, ST depression,")
+            print(f"    Aspirin 325mg + Nitroglycerin 0.4mg, urgent cardiology referral.")
+            print(f"    Extracted: age={james.age}, gender={james.gender!r}, blood_type={james.blood_type!r}")
+            print(f"    Drugs extracted: {[rx.drug for rx in prescriptions]}")
+            print(f"    Chief complaint: {record.chief_complaint!r}")
+            assert james.age == 58,          f"age mismatch: {james.age}"
+            assert "male" in (james.gender or "").lower(), f"gender mismatch: {james.gender}"
+            assert "o" in (james.blood_type or "").lower(), f"blood_type mismatch: {james.blood_type}"
+            drugs = [rx.drug.lower() for rx in prescriptions]
+            assert any("aspirin" in d for d in drugs), f"Aspirin missing from {drugs}"
+            assert any("nitroglycerin" in d or "nitro" in d for d in drugs), f"Nitroglycerin missing from {drugs}"
+            print(f"    ✓ All field assertions passed.")
+        finally:
+            db3.close()
 
     # ─────────────────────────────────────────────────────────────────────────
     sep("STEP 4 — 8 agent queries (raw JSON output)")
     # ─────────────────────────────────────────────────────────────────────────
 
-    for label, query in AGENT_QUERIES:
-        print(f"\n  ── Query: {label}")
-        print(f"     Input:  \"{query}\"")
-        result = agent_query(query)
-        print(f"     Answer: {result['answer'][:300]}")
-        print(f"     Patients matched: {len(result['patients'])}")
-        for p in result["patients"]:
-            print(f"       • {p['name']} (id={p['id']}, age={p.get('age')})")
-        time.sleep(8)   # pause between agent queries
+    if FROM_STEP > 4:
+        print("  SKIPPED.")
+    else:
+        for label, query in AGENT_QUERIES:
+            print(f"\n  ── Query: {label}")
+            print(f"     Input:  \"{query}\"")
+            result = agent_query(query)
+            print(f"     Answer: {result['answer'][:300]}")
+            print(f"     Patients matched: {len(result['patients'])}")
+            for p in result["patients"]:
+                print(f"       • {p['name']} (id={p['id']}, age={p.get('age')})")
+            time.sleep(8)
 
     # ─────────────────────────────────────────────────────────────────────────
     sep("STEP 5 — Sarah Johnson follow-up visit")
@@ -316,7 +345,6 @@ def main():
 
     db4 = SessionLocal()
     try:
-        sarah = db4.query(Patient).filter(Patient.id == sarah_original_patient_id).first()
         total_patients = db4.query(Patient).count()
         records = db4.query(Record).filter(Record.patient_id == sarah_original_patient_id).all()
         print(f"\n  Total patients still in DB: {total_patients}  (should still be 6)")
