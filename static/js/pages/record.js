@@ -211,7 +211,7 @@ async function submitUpload() {
 async function submitAudioForm(formData) {
   showProcessing();
   try {
-    const result = await API.postForm('/api/record/', formData);
+    const result = await API.postForm('/api/transcription/audio', formData);
     showResult(result);
   } catch (e) {
     toast(`Error: ${e.message}`, 'error');
@@ -227,7 +227,7 @@ async function submitTranscript() {
   formData.append('transcript', text);
   if (selectedPatient) formData.append('patient_id', selectedPatient.id);
   try {
-    const result = await API.postForm('/api/record/transcript', formData);
+    const result = await API.postForm('/api/transcription/text', formData);
     showResult(result);
   } catch (e) {
     toast(`Error: ${e.message}`, 'error');

@@ -5,7 +5,56 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
-_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+
+def _load_key_pool() -> list[str]:
+    """Collect all GEMINI_API_KEY, GEMINI_API_KEY_2, GEMINI_API_KEY_3, … from env."""
+    keys = []
+    primary = os.getenv("GEMINI_API_KEY", "").strip()
+    if primary:
+        keys.append(primary)
+    i = 2
+    while True:
+        k = os.getenv(f"GEMINI_API_KEY_{i}", "").strip()
+        if not k:
+            break
+        keys.append(k)
+        i += 1
+    if not keys:
+        raise RuntimeError("No GEMINI_API_KEY found in environment.")
+    return keys
+
+
+class _KeyPool:
+    """Round-robin Gemini client pool — rotates on 429 / RESOURCE_EXHAUSTED."""
+
+    def __init__(self, keys: list[str]):
+        self._keys = keys
+        self._idx = 0
+        self._client = genai.Client(api_key=keys[0])
+        print(f"[gemini] loaded {len(keys)} API key(s).", flush=True)
+
+    def _rotate(self) -> None:
+        self._idx = (self._idx + 1) % len(self._keys)
+        self._client = genai.Client(api_key=self._keys[self._idx])
+        print(f"[gemini] rotated to key {self._idx + 1}/{len(self._keys)}.", flush=True)
+
+    def call(self, fn, *args, **kwargs):
+        """Call fn(client, *args, **kwargs), rotating through keys on rate-limit errors."""
+        start = self._idx
+        while True:
+            try:
+                return fn(self._client, *args, **kwargs)
+            except Exception as e:
+                msg = str(e)
+                if "429" in msg or "RESOURCE_EXHAUSTED" in msg:
+                    self._rotate()
+                    if self._idx == start:
+                        raise RuntimeError("All Gemini API keys exhausted.") from e
+                else:
+                    raise
+
+
+_pool = _KeyPool(_load_key_pool())
 
 FLASH_MODEL = "gemini-2.5-flash"
 EMBED_MODEL = "gemini-embedding-001"
@@ -49,10 +98,12 @@ Transcript:
 
 
 def extract_record(transcript: str) -> dict:
-    response = _client.models.generate_content(
-        model=FLASH_MODEL,
-        contents=EXTRACTION_PROMPT + transcript,
-    )
+    def _call(client):
+        return client.models.generate_content(
+            model=FLASH_MODEL,
+            contents=EXTRACTION_PROMPT + transcript,
+        )
+    response = _pool.call(_call)
     raw = response.text.strip()
     if raw.startswith("```"):
         raw = raw.split("```")[1]
@@ -62,10 +113,12 @@ def extract_record(transcript: str) -> dict:
 
 
 def embed_text(text: str) -> list[float]:
-    response = _client.models.embed_content(
-        model=EMBED_MODEL,
-        contents=text,
-    )
+    def _call(client):
+        return client.models.embed_content(
+            model=EMBED_MODEL,
+            contents=text,
+        )
+    response = _pool.call(_call)
     return response.embeddings[0].values
 
 

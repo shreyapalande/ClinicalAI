@@ -3,12 +3,10 @@ Agent endpoint: Gemini with function calling over the 7 MCP tools.
 POST /api/agent/query  →  {answer: str, patients: list[dict]}
 """
 
-import os
 from fastapi import APIRouter, Body, HTTPException
-from google import genai
 from google.genai import types
-from dotenv import load_dotenv
 
+from services.gemini import _pool as _gemini_pool
 from backend.tools import (
     get_all_patient_ids,
     search_records_semantic,
@@ -19,10 +17,7 @@ from backend.tools import (
     filter_by_allergy,
 )
 
-load_dotenv(override=True)
-
 router = APIRouter(prefix="/api/agent", tags=["agent"])
-_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 FLASH_MODEL = "gemini-2.5-flash"
 
 TOOL_MAP = {
@@ -174,13 +169,15 @@ def agent_query(body: dict = Body(...)):
     final_answer = "I could not find relevant information for your query."
 
     for _ in range(12):
-        response = _client.models.generate_content(
-            model=FLASH_MODEL,
-            contents=contents,
-            config=types.GenerateContentConfig(
-                tools=[TOOLS],
-                thinking_config=types.ThinkingConfig(thinking_budget=0),
-            ),
+        response = _gemini_pool.call(
+            lambda client: client.models.generate_content(
+                model=FLASH_MODEL,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    tools=[TOOLS],
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
+                ),
+            )
         )
 
         model_content = response.candidates[0].content

@@ -3,8 +3,9 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
-from db.database import init_db
-from routes import patients, record, search, agent
+from backend.database import init_db
+from backend.routers import patients, transcription, search
+from routes import agent
 
 load_dotenv()
 
@@ -21,7 +22,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 init_db()
 
 app.include_router(patients.router)
-app.include_router(record.router)
+app.include_router(transcription.router)
 app.include_router(search.router)
 app.include_router(agent.router)
 
