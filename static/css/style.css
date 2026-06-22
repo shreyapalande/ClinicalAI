@@ -318,3 +318,12 @@ hr { border: none; border-top: 1px solid var(--border); margin: 1.2rem 0; }
   line-height: 1.7;
   color: var(--text);
 }
+.agent-answer-text p { margin-bottom: 0.6rem; }
+.agent-answer-text p:last-child { margin-bottom: 0; }
+.agent-answer-text ul,
+.agent-answer-text ol {
+  padding-left: 1.4rem;
+  margin-bottom: 0.6rem;
+}
+.agent-answer-text li { margin-bottom: 0.3rem; }
+.agent-answer-text li:last-child { margin-bottom: 0; }

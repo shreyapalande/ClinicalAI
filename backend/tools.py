@@ -76,8 +76,13 @@ def search_records_semantic(
 
         scored.sort(key=lambda x: x[2], reverse=True)
 
+        # Deduplicate: keep only the highest-scoring record per patient
+        seen_patients: set[int] = set()
         results = []
-        for record, _emb, score in scored[:top_k]:
+        for record, _emb, score in scored:
+            if record.patient_id in seen_patients:
+                continue
+            seen_patients.add(record.patient_id)
             patient = db.query(Patient).filter(Patient.id == record.patient_id).first()
             results.append({
                 "patient_id": record.patient_id,
@@ -90,6 +95,8 @@ def search_records_semantic(
                 "prescriptions": _rx_list(record),
                 "created_at": record.created_at.isoformat() if record.created_at else None,
             })
+            if len(results) >= top_k:
+                break
         return results
     finally:
         if own:

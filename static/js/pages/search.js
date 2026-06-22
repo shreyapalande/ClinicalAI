@@ -61,6 +61,38 @@ async function doAgentQuery() {
   }
 }
 
+function _mdToHtml(md) {
+  // Split into blocks on blank lines
+  const blocks = md.trim().split(/\n{2,}/);
+  return blocks.map(block => {
+    const lines = block.split('\n');
+    // Detect bullet list block (lines starting with * or -)
+    if (lines.every(l => /^\s*[\*\-]\s+/.test(l) || l.trim() === '')) {
+      const items = lines
+        .filter(l => /^\s*[\*\-]\s+/.test(l))
+        .map(l => `<li>${_inlineMd(l.replace(/^\s*[\*\-]\s+/, ''))}</li>`)
+        .join('');
+      return `<ul>${items}</ul>`;
+    }
+    // Detect numbered list block
+    if (lines.every(l => /^\s*\d+\.\s+/.test(l) || l.trim() === '')) {
+      const items = lines
+        .filter(l => /^\s*\d+\.\s+/.test(l))
+        .map(l => `<li>${_inlineMd(l.replace(/^\s*\d+\.\s+/, ''))}</li>`)
+        .join('');
+      return `<ol>${items}</ol>`;
+    }
+    // Plain paragraph — join lines with a space
+    return `<p>${_inlineMd(lines.join(' '))}</p>`;
+  }).join('');
+}
+
+function _inlineMd(text) {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')  // **bold**
+    .replace(/\*(.+?)\*/g, '<em>$1</em>');              // *italic*
+}
+
 function _renderAgentResults({ answer, patients }) {
   const resultsEl = document.getElementById('agent-results');
 
@@ -99,7 +131,7 @@ function _renderAgentResults({ answer, patients }) {
   resultsEl.innerHTML = `
     <div class="agent-answer">
       <div class="agent-answer-label">Agent</div>
-      <div class="agent-answer-text">${answer.replace(/\n/g, '<br>')}</div>
+      <div class="agent-answer-text">${_mdToHtml(answer)}</div>
     </div>
     ${patients.length ? `
       <h3 style="margin:1.5rem 0 0.8rem;color:var(--text-muted);font-size:0.8rem;text-transform:uppercase;letter-spacing:0.8px">

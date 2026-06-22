@@ -51,8 +51,10 @@ class _KeyPool:
                     self._rotate()
                     if self._idx == start:
                         raise RuntimeError("All Gemini API keys exhausted.") from e
-                    # Brief pause so per-minute limits on the next key have time to clear
                     time.sleep(2)
+                elif "503" in msg or "SERVICE_UNAVAILABLE" in msg or "overloaded" in msg.lower():
+                    print(f"[gemini] 503 service unavailable — retrying in 5s…", flush=True)
+                    time.sleep(5)
                 else:
                     raise
 
