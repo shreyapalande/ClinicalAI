@@ -120,9 +120,6 @@ function _renderAgentResults({ answer, patients }) {
                     · ${formatDate(latestVisit.created_at)}
                   </div>` : ''}
               </div>
-              <div style="text-align:right;flex-shrink:0">
-                <div style="font-size:0.78rem;color:var(--text-muted)">${p.visits ? p.visits.length : 0} visit${p.visits && p.visits.length !== 1 ? 's' : ''}</div>
-              </div>
             </div>
           </div>`;
       }).join('')
